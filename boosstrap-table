@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <link href="https://cdn.bootcss.com/twitter-bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.bootcss.com/bootstrap-table/1.12.1/bootstrap-table.css" rel="stylesheet">
+    <link href="https://cdn.bootcss.com/x-editable/1.5.1/bootstrap3-editable/css/bootstrap-editable.css"
+          rel="stylesheet">
+    <link href="https://cdn.bootcss.com/select2/4.0.5/css/select2.min.css" rel="stylesheet">
+    <script src="https://cdn.bootcss.com/jquery/2.2.4/jquery.min.js"></script>
+    <script src="https://cdn.bootcss.com/twitter-bootstrap/3.3.7/js/bootstrap.min.js"></script>
+    <script src="https://cdn.bootcss.com/bootstrap-table/1.12.1/bootstrap-table.min.js"></script>
+    <script src="https://cdn.bootcss.com/bootstrap-table/1.12.1/locale/bootstrap-table-zh-CN.min.js"></script>
+    <script src="https://cdn.bootcss.com/x-editable/1.5.1/bootstrap3-editable/js/bootstrap-editable.min.js"></script>
+    <script src="bootstrap-table-editable.js"></script>
+</head>
+<body>
+<div class="container">
+    <div class="row">
+        <div class="col-sm-12">
+            <button id="addOption" type="button" class="btn btn-primary" >增加可选项</button>
+            <button id="batchDeleteOption" type="button" class="btn btn-danger">批量删除</button>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-sm-12">
+            <table id="table"></table>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function($) {
+
+        'use strict';
+
+        $.extend($.fn.bootstrapTable.defaults, {
+            editable: true,
+            onEditableInit: function() {
+                return false;
+            },
+            onEditableSave: function(field, row, oldValue, $el) {
+                return false;
+            },
+            onEditableShown: function(field, row, $el, editable) {
+                return false;
+            },
+            onEditableHidden: function(field, row, $el, reason) {
+                return false;
+            }
+        });
+
+        $.extend($.fn.bootstrapTable.Constructor.EVENTS, {
+            'editable-init.bs.table': 'onEditableInit',
+            'editable-save.bs.table': 'onEditableSave',
+            'editable-shown.bs.table': 'onEditableShown',
+            'editable-hidden.bs.table': 'onEditableHidden'
+        });
+
+        var BootstrapTable = $.fn.bootstrapTable.Constructor,
+            _initTable = BootstrapTable.prototype.initTable,
+            _initBody = BootstrapTable.prototype.initBody;
+
+        BootstrapTable.prototype.initTable = function() {
+            var that = this;
+            _initTable.apply(this, Array.prototype.slice.apply(arguments));
+
+            if (!this.options.editable) {
+                return;
+            }
+
+            $.each(this.columns, function(i, column) {
+                if (!column.editable) {
+                    return;
+                }
+
+                var editableOptions = {},
+                    editableDataMarkup = [],
+                    editableDataPrefix = 'editable-';
+
+                var processDataOptions = function(key, value) {
+                    // Replace camel case with dashes.
+                    var dashKey = key.replace(/([A-Z])/g, function($1) {
+                        return "-" + $1.toLowerCase();
+                    });
+                    if (dashKey.slice(0, editableDataPrefix.length) == editableDataPrefix) {
+                        var dataKey = dashKey.replace(editableDataPrefix, 'data-');
+                        editableOptions[dataKey] = value;
+                    }
+                };
+
+                $.each(that.options, processDataOptions);
+
+                column.formatter = column.formatter || function(value, row, index) {
+                    return value;
+                };
+                column._formatter = column._formatter ? column._formatter : column.formatter;
+                column.formatter = function(value, row, index) {
+                    var result = column._formatter ? column._formatter(value, row, index) : value;
+
+                    $.each(column, processDataOptions);
+
+                    $.each(editableOptions, function(key, value) {
+                        editableDataMarkup.push(' ' + key + '="' + value + '"');
+                    });
+
+                    var _dont_edit_formatter = false;
+                    if (column.editable.hasOwnProperty('noeditFormatter')) {
+                        _dont_edit_formatter = column.editable.noeditFormatter(value, row, index);
+                    }
+
+                    if (_dont_edit_formatter === false) {
+                        return ['<a href="javascript:void(0)"',
+                            ' data-name="' + column.field + '"',
+                            ' data-pk="' + row[that.options.idField] + '"',
+                            ' data-value="' + result + '"',
+                            editableDataMarkup.join(''),
+                            '>' + '</a>'
+                        ].join('');
+                    } else {
+                        return _dont_edit_formatter;
+                    }
+
+                };
+            });
+        };
+
+        BootstrapTable.prototype.initBody = function() {
+            var that = this;
+            _initBody.apply(this, Array.prototype.slice.apply(arguments));
+
+            if (!this.options.editable) {
+                return;
+            }
+
+            $.each(this.columns, function(i, column) {
+                if (!column.editable) {
+                    return;
+                }
+
+                that.$body.find('a[data-name="' + column.field + '"]').editable(column.editable)
+                    .off('save').on('save', function(e, params) {
+                    var data = that.getData(),
+                        index = $(this).parents('tr[data-index]').data('index'),
+                        row = data[index],
+                        oldValue = row[column.field];
+
+                    $(this).data('value', params.submitValue);
+                    row[column.field] = params.submitValue;
+                    that.trigger('editable-save', column.field, row, oldValue, $(this));
+                    that.resetFooter();
+                });
+                that.$body.find('a[data-name="' + column.field + '"]').editable(column.editable)
+                    .off('shown').on('shown', function(e, editable) {
+                    var data = that.getData(),
+                        index = $(this).parents('tr[data-index]').data('index'),
+                        row = data[index];
+
+                    that.trigger('editable-shown', column.field, row, $(this), editable);
+                });
+                that.$body.find('a[data-name="' + column.field + '"]').editable(column.editable)
+                    .off('hidden').on('hidden', function(e, reason) {
+                    var data = that.getData(),
+                        index = $(this).parents('tr[data-index]').data('index'),
+                        row = data[index];
+
+                    that.trigger('editable-hidden', column.field, row, $(this), reason);
+                });
+            });
+            this.trigger('editable-init');
+        };
+
+    })(jQuery);
+
+    //防止jquery版本冲突
+    var jq224 = $.noConflict();
+    var option = (function ($) {
+        //json数据测试文件
+        var data = [
+            {
+                "option": "可选项A",
+                "type": "1",
+                "MultiSelect": "2",
+                "optionValues": [
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": -1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 0,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    }
+                ]
+            },
+            {
+                "option": "可选项A",
+                "type": "2",
+                "MultiSelect": "2",
+                "optionValues": [
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": -1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 0,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    }
+                ]
+            },
+            {
+                "option": "可选项A",
+                "type": "1",
+                "MultiSelect": "1",
+                "optionValues": [
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": -1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 0,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    }
+                ]
+            },
+            {
+                "option": "可选项A",
+                "type": "2",
+                "MultiSelect": "1",
+                "optionValues": [
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": -1,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    },
+                    {
+                        "optValue": "可选值A",
+                        "explain": "说明A",
+                        "counter": 0,
+                        "initialValue": 0,
+                        "minValue": 0,
+                        "maxValue": 0
+                    }
+                ]
+            }
+        ];
+
+        function getId() {
+            return Number(Math.random().toString().substr(3, 10) + Date.now()).toString(36);
+        }
+
+        function dealData(data) {
+            //处理数据文件
+            for (var i = 0; i < data.length; i++) {
+                data[i]['id'] = getId();
+                for (var j = 0; j < data[i].optionValues.length; j++) {
+                    data[i]['optionValues'][j]["id"] = getId();
+                }
+            }
+            return data;
+        }
+
+        var optionTable = $("#table");
+
+        //初始化表格
+        function initTable() {
+            $('#table').bootstrapTable({
+                columns: [{
+                    field: 'state',
+                    checkbox: true,
+                }, {
+                    field: 'option',
+                    title: '可选项',
+                    editable: {
+                        type: 'text',
+                        title: '请填写可选项名称',
+                        emptytext: '可选项必填',
+                        validate: function (value) {
+                            if (!validateNotNull(value)) {
+                                return "不能为空"
+                            }
+                        }
+                    },
+
+                }, {
+                    field: 'type',
+                    title: '可选项类型',
+                    editable: {
+                        type: 'select',
+                        title: '请选择可选项类型',
+                        source: [
+                            {value: 1, text: '预约可选项'},
+                            {value: 2, text: '状态可选项'},
+                        ]
+                    }
+                }, {
+                    field: 'MultiSelect',
+                    title: '是否多选',
+                    editable: {
+                        type: 'select',
+                        title: '请选择可选项类型',
+                        source: [
+                            {value: 1, text: '是'},
+                            {value: 2, text: '否'},
+                        ]
+                    }
+                }, {
+                    field: 'operate',
+                    formatter: operateFormatter,
+                    title: '操作',
+                    events: 'actionEvents',
+                },],
+                detailView: true,
+                data: dealData(data),
+                //展开可选项触发事件
+                onExpandRow: function (index, row, $detail) {
+                    expandTable($detail, row.optionValues, 'subTable' + row.id);
+                },
+                //折叠可选项触发事件
+                onCollapseRow: function (index, row) {
+                    var data = $("#subTable" + row.id).bootstrapTable('getData');
+                    row.optionValues = data;
+                }
+            });
+        }
+
+        //展开一个可选项
+        function expandTable($detail, data, rowId) {
+            buildTable($detail.html('<table id="' + rowId + '"></table>').find('table'), data);
+        }
+
+        //创建子表
+        function buildTable($el, data) {
+            $el.bootstrapTable({
+                columns: [{
+                    field: 'optValue',
+                    title: '可选值',
+                    editable: {
+                        type: 'text',
+                        title: '设置可选值',
+                        emptytext: '可选值必填',
+                        validate: function (value) {
+                            if (!validateNotNull(value)) {
+                                return "不能为空"
+                            }
+                        }
+                    }
+                }, {
+                    field: 'explain',
+                    title: '说明',
+                    editable: {
+                        type: 'text',
+                        title: '设置说明',
+                        emptyclass:'',
+                        emptytext: '未填写说明',
+                    }
+                }, {
+                    field: 'counter',
+                    title: '计数器',
+                    editable: {
+                        type: 'select',
+                        title: '设置计数器',
+                        source: [
+                            {value: 1, text: '递增'},
+                            {value: -1, text: '递减'},
+                            {value: 0, text: '无变化'}
+                        ],
+                    },
+
+
+                }, {
+                    field: 'initialValue',
+                    title: '初始值',
+                    emptytext: '',
+                    formatter: function (value, row, index) {
+                        if (row.counter == 0) {
+                            return '';
+                        }
+                        return value;
+                    },
+                    editable: {
+                        type: 'text',
+                        title: '设置初始值',
+                        emptytext: '',
+                        validate: function (value) {
+                            if (!validateNumber(value)) {
+                                return "请输入数字";
+                            }
+                            if (!validateNotNull(value)) {
+                                return "不能为空"
+                            }
+                        }
+                    }
+                }, {
+                    field: 'minValue',
+                    title: '最小值',
+                    formatter: function (value, row, index) {
+                        if (row.counter == 0) {
+                            return '';
+                        }
+                        return value;
+                    },
+                    editable: {
+                        type: 'text',
+                        title: '设置最小值',
+                        emptytext: '',
+                        validate: function (value) {
+                            if (!validateNumber(value)) {
+                                return "请输入数字"
+                            }
+                            if (!validateNotNull(value)) {
+                                return "不能为空"
+                            }
+                        }
+                    }
+                }, {
+                    field: 'maxValue',
+                    title: '最大值',
+                    formatter: function (value, row, index) {
+                        if (row.counter == 0) {
+                            return '';
+                        }
+                        return value;
+                    },
+                    editable: {
+                        emptytext: '',
+                        type: 'text',
+                        title: '设置最小值',
+                        validate: function (value) {
+                            if (!validateNumber(value)) {
+                                return "请输入数字"
+                            }
+                            if (!validateNotNull(value)) {
+                                return "不能为空"
+                            }
+                        }
+                    }
+                }, {
+                    field: 'operation',
+                    title: '操作',
+                    formatter: operateValueFormatter,
+                    events: actionEvents
+                }],
+                //编辑完单元格触发事件
+                onEditableSave: function (field, row, oldValue, $el) {
+                    if (field == 'counter') {
+                        if (row.counter == 0) {
+                            row.initialValue = '';
+                            row.minValue = '';
+                            row.maxValue = '';
+                        } else {
+                            row.initialValue = 0;
+                            row.minValue = 0;
+                            row.maxValue = 0;
+                        }
+                        var index = $el.parent("tr").first().attr("data-index");
+                        var table = $el.parents("table").first();
+                        //刷新行
+                        table.bootstrapTable('updateRow', {index: index, row: row})
+                    }
+                },
+                data: data
+            });
+        }
+
+        $("#addOption").click(function () {
+            addOption();
+        });
+
+        $("#batchDeleteOption").click(function () {
+            batchDeleteOption();
+        });
+
+        //新增可选项
+        function addOption() {
+            optionTable.bootstrapTable('append', {
+                id: getId(),
+                option: '',
+                type: 1,
+                MultiSelect: 1,
+                optionValues:[]
+            })
+        }
+
+        //格式化可选项操作列
+        function operateFormatter(value, row, index) {
+            return ['<div class="center-block"><button type="button" class="addOptionValue btn btn-primary btn-sm" >新增可选值</button><button type="button" class="deleteOption btn btn-danger btn-sm">删除</button></div>'].join("");
+        }
+
+        //格式化可选值操作列
+        function operateValueFormatter(value, row, index) {
+            return ['<button type="button" class="deleteOptionValue btn btn-danger btn-sm" >删除</button>'].join("");
+        }
+
+        //设置事件
+        window.actionEvents = {
+            //新增可选值
+            'click .addOptionValue': function (e, value, row, index) {
+                optionTable.bootstrapTable('expandRow', index);
+                $('#subTable' + row.id).bootstrapTable('append', {
+                    id: getId(),
+                    optValue: '',
+                    explain: '',
+                    counter: 0,
+                    initialValue: '',
+                    minValue: '',
+                    maxValue: '',
+                    operation: ''
+                })
+            },
+            //删除可选项
+            'click .deleteOption': function (e, value, row, index) {
+                optionTable.bootstrapTable('remove', {
+                    field: 'id',
+                    values: [row.id]
+                });
+            },
+            //删除可选值
+            'click .deleteOptionValue': function (e, value, row, index) {
+                $(e.target).closest('table').bootstrapTable('remove', {
+                    field: 'id',
+                    values: [row.id]
+                })
+            }
+        };
+
+
+        /**
+         * 批量删除可选项
+         */
+        function batchDeleteOption() {
+            var ids = getIdSelections();
+            optionTable.bootstrapTable('remove', {
+                field: 'id',
+                values: ids
+            });
+        }
+
+        function getIdSelections() {
+            return $.map(optionTable.bootstrapTable('getSelections'), function (row) {
+                return row.id
+            });
+        }
+
+        $(function () {
+            initTable();
+        });
+
+        //获取表格数据
+        function getTableData() {
+            var data = optionTable.bootstrapTable('getData');
+            for (var i = 0; i < data.length; i++) {
+                var id = data[i].id;
+                //判断该可选项是否有可选值表格
+                if ($("#subTable" + id).length > 0) {
+                    var subData = $("#subTable" + id).bootstrapTable('getData');
+                    data[i].optionValues = subData;
+                }
+
+            }
+            return data;
+        }
+
+        //校验表格数据
+        function validateTableData(data) {
+            for (var i=0;i<data.length;i++){
+                if (data[i].option==''){
+                    return "可选项不能为空，位置：第"+(i+1)+"个可选项错误";
+                }
+                var values = data[i].optionValues;
+                for (var j=0;j<values.length;j++){
+                    var location = ',位置:第'+(i+1)+"个可选项的第"+(j+1)+"个可选值错误";
+                    if (values[j].optValue==''){
+                        return '可选值不能为空'+location;
+                    }else if (values[j].initialValue<values[j].minValue){
+                        return '初始值不能小于最小值'+location;
+                    }else if (values[j].initialValue>values[j].maxValue){
+                        return '初始值不能大于最大值'+location;
+                    }else if (values[j].minValue>values[j].maxValue){
+                        return '最小值不能大于最大值'+location;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // window.getTableData = getTableData;
+
+        /**
+         * 校验
+         * @param value
+         * @returns {boolean}
+         */
+
+        //校验数字
+        function validateNumber(value) {
+            var reg = /^[0-9]*$/;
+            if (!reg.test(value)) {
+                return false;
+            }
+            return true;
+        }
+
+        //校验非空
+        function validateNotNull(value) {
+            if ($.trim(value) == '') {
+                return false;
+            }
+            return true;
+        }
+
+        return {
+            getTableData:function () {
+                return getTableData();
+            },
+            validateTableData:function () {
+                return validateTableData(getTableData());
+            }
+        }
+    })(jq224)
+</script>
+</body>
+</html>
